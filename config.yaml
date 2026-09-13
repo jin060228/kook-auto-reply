@@ -1,0 +1,72 @@
+# ============================================
+# KOOK 自动回复 · 配置文件
+# 填写说明：只改值，不要改字段名、缩进和引号
+# 保存后重启脚本生效（或按实现支持热更新）
+# ============================================
+
+# 全局总开关：false 时完全不回复（一键停用，不用删规则）
+enable: true
+
+# ---------- 登录（本人账号） ----------
+account:
+  token: "你的登录凭证"      # 本地保存，勿外泄、勿写入日志
+
+# ---------- 目标：语音频道聊天框 ----------
+target:
+  server_id: "服务器ID"      # 填入服务器 ID
+  channel_id: "语音频道ID"   # 填入你挂着的那个语音频道 ID
+
+# ---------- 触发白名单：只有这些人发言才参与匹配 ----------
+whitelist:
+  users:
+    - "用户ID1"
+    - "用户ID2"
+
+# ---------- 关键词规则（最多约 20 条） ----------
+# keywords  : 消息里出现该字符序列即命中（原样字符，零转换零优化）
+# reply_mode: random 随机 / fixed 固定第一条 / sequential 轮流
+# cooldown  : 同规则 N 秒内不重复回复
+# priority  : 多条规则同时命中时，取数值最大的一条
+rules:
+  - name: "示例-问候"
+    enabled: true
+    keywords:
+      - "在吗"
+      - "有人吗"
+    replies:
+      - "在的，怎么了"
+      - "在呢"
+    reply_mode: random
+    cooldown: 10
+    priority: 1
+
+  - name: "示例-报名"
+    enabled: true
+    keywords:
+      - "报名"
+    replies:
+      - "收到，已登记"
+    reply_mode: fixed
+    cooldown: 30
+    priority: 2
+
+# ---------- 全局行为 ----------
+behavior:
+  per_user_cooldown: 5       # 同一人 N 秒内不重复回复
+  global_rate: 30            # 每分钟最多回复条数（防高频风控）
+  quiet_hours: []            # 静默时段，如 ["23:00-07:00"]；留空 = 不静默
+  ignore_prefix: ["/"]       # 以这些字符开头的消息不参与匹配
+  ignore_bots: true          # 其他机器人的消息不参与匹配
+  ignore_system: true        # 系统消息（进出频道、@全体等）不参与匹配
+
+# ---------- 日志 ----------
+logging:
+  hit_log: true              # 记录命中：谁/何时/哪条规则/回复内容
+  log_file: "hits.log"       # 日志文件路径
+
+# ---------- 连接与运维 ----------
+network:
+  reconnect: true            # 断线自动重连
+  reconnect_backoff: [1, 60] # 重连退避区间（秒）
+  notify_on_disconnect: true # 掉线时通知你
+  verify_channel_on_start: true  # 启动时校验当前频道是否等于 target.channel_id

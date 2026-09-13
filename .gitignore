@@ -1,0 +1,9 @@
+# 日志
+*.log
+
+# Python 运行时产物
+__pycache__/
+*.pyc
+
+# 环境变量/凭证（如以后用 .env 存放 token）
+.env
