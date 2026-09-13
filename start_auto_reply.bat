@@ -57,9 +57,9 @@ echo   调试端口就绪。
 
 rem ---------- 3. 启动自动回复脚本 ----------
 echo.
-echo [3/3] 启动自动回复脚本...
+echo [3/3] 打开可视化配置界面...
 cd /d "%~dp0"
-python auto_reply.py
+python config_editor.py
 if %errorlevel% neq 0 (
     echo.
     echo [错误] 脚本异常退出，错误码 %errorlevel%
