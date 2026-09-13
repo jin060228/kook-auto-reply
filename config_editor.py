@@ -2,7 +2,7 @@
 """
 KOOK 自动回复 · 可视化配置程序（单页面版）
 
-布局参考：左侧关键词规则列表（每条规则可单独限定触发用户），
+布局：左侧关键词规则列表（每条规则可单独限定触发用户），
 右侧基本设置，顶部启动/停止，编辑规则用弹窗。
 所有规则操作立即保存到 config.yaml。
 
@@ -105,7 +105,7 @@ def format_csv(items):
 # ---------------------------------------------------------------------------
 
 class RuleDialog(tk.Toplevel):
-    """新增/编辑规则弹窗；确定后通过 result 返回规则 dict，取消返回 None"""
+    """新增/编辑规则弹窗；确定后 result 返回规则 dict（不含 name），取消返回 None"""
 
     def __init__(self, parent, rule=None):
         super().__init__(parent)
@@ -113,69 +113,76 @@ class RuleDialog(tk.Toplevel):
         self.resizable(False, False)
         self.transient(parent)
         self.result = None
-        self._rule = rule
 
-        pad = {"padx": 12, "pady": 4}
+        pad = {"padx": 12, "pady": 3}
         frm = ttk.Frame(self, padding=14)
         frm.pack(fill="both", expand=True)
 
-        # 名称（内部标识，用于轮流回复与冷却区分）
-        ttk.Label(frm, text="名称（内部标识）").grid(row=0, column=0, sticky="w", **pad)
-        self.name_var = tk.StringVar()
-        ttk.Entry(frm, textvariable=self.name_var, width=40).grid(row=0, column=1, sticky="w", **pad)
-
         # 关键词
-        ttk.Label(frm, text="关键词（逗号分隔）").grid(row=1, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="关键词").grid(row=0, column=0, sticky="nw", **pad)
         self.kw_var = tk.StringVar()
-        ttk.Entry(frm, textvariable=self.kw_var, width=40).grid(row=1, column=1, sticky="w", **pad)
-        ttk.Label(frm, text="消息里包含任一关键词即触发（原样字符匹配）",
-                  foreground="#888").grid(row=2, column=1, sticky="w", **pad)
+        ttk.Entry(frm, textvariable=self.kw_var, width=40).grid(row=0, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="别人发的消息里包含这些词就会回复。多个词用逗号分隔，\n"
+                            "如：在吗, 在不在（消息里出现任一关键词即触发，原样匹配）",
+                  foreground="#888", justify="left").grid(row=1, column=1, sticky="w", **pad)
 
         # 回复内容
-        ttk.Label(frm, text="回复内容（逗号分隔）").grid(row=3, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="回复内容").grid(row=2, column=0, sticky="nw", **pad)
         self.reply_var = tk.StringVar()
-        ttk.Entry(frm, textvariable=self.reply_var, width=40).grid(row=3, column=1, sticky="w", **pad)
+        ttk.Entry(frm, textvariable=self.reply_var, width=40).grid(row=2, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="命中后要发送的消息。可以写多条，用逗号分隔，\n"
+                            "如：在的，在呢，找我有事吗（回哪条由「回复模式」决定）",
+                  foreground="#888", justify="left").grid(row=3, column=1, sticky="w", **pad)
 
         # 回复模式
-        ttk.Label(frm, text="回复模式").grid(row=4, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="回复模式").grid(row=4, column=0, sticky="nw", **pad)
         self.mode_var = tk.StringVar(value="固定回复")
         ttk.Combobox(frm, textvariable=self.mode_var, values=list(MODE_LABELS.values()),
                      state="readonly", width=20).grid(row=4, column=1, sticky="w", **pad)
         self.hint_var = tk.StringVar()
         ttk.Label(frm, textvariable=self.hint_var, foreground="#888").grid(
             row=5, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="写了多条回复时怎么选：\n"
+                            "固定=永远回第一条；随机=每次随机挑一条；轮流=按顺序轮着回",
+                  foreground="#888", justify="left").grid(row=6, column=1, sticky="w", **pad)
         self.mode_var.trace_add("write", self._update_hint)
         self._update_hint()
 
         # 冷却 / 优先级
-        ttk.Label(frm, text="冷却（秒）").grid(row=6, column=0, sticky="w", **pad)
+        ttk.Label(frm, text="冷却（秒）").grid(row=7, column=0, sticky="nw", **pad)
         self.cd_var = tk.StringVar(value="0")
-        ttk.Entry(frm, textvariable=self.cd_var, width=12).grid(row=6, column=1, sticky="w", **pad)
-        ttk.Label(frm, text="优先级（大者优先）").grid(row=7, column=0, sticky="w", **pad)
+        ttk.Entry(frm, textvariable=self.cd_var, width=12).grid(row=7, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="同一条规则两次回复之间至少隔这么久，防止刷屏；0 = 不限",
+                  foreground="#888", justify="left").grid(row=8, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="优先级（大者优先）").grid(row=9, column=0, sticky="nw", **pad)
         self.pri_var = tk.StringVar(value="0")
-        ttk.Entry(frm, textvariable=self.pri_var, width=12).grid(row=7, column=1, sticky="w", **pad)
+        ttk.Entry(frm, textvariable=self.pri_var, width=12).grid(row=9, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="一条消息同时命中多条规则时，谁先回复；数字越大越优先，0 = 普通",
+                  foreground="#888", justify="left").grid(row=10, column=1, sticky="w", **pad)
 
         # 仅回复这些人
-        ttk.Label(frm, text="仅回复这些人").grid(row=8, column=0, sticky="nw", **pad)
+        ttk.Label(frm, text="仅回复这些人").grid(row=11, column=0, sticky="nw", **pad)
         self.users_var = tk.StringVar()
-        ttk.Entry(frm, textvariable=self.users_var, width=40).grid(row=8, column=1, sticky="w", **pad)
-        ttk.Label(frm, text="可选。填用户ID或用户名，逗号分隔，如：10001, BD-小锦#2059\n留空 = 任何人都能触发",
-                  foreground="#888", justify="left").grid(row=9, column=1, sticky="w", **pad)
+        ttk.Entry(frm, textvariable=self.users_var, width=40).grid(row=11, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="可选。这条规则只对填的人生效，多个用逗号分隔，\n"
+                            "如：10001, BD-小锦#2059（用户ID或用户名都可以）\n"
+                            "留空 = 任何人都能触发",
+                  foreground="#888", justify="left").grid(row=12, column=1, sticky="w", **pad)
 
         # 启用
         self.enabled_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(frm, text="启用这条规则", variable=self.enabled_var).grid(
-            row=10, column=0, columnspan=2, sticky="w", **pad)
+        ttk.Checkbutton(frm, text="启用这条规则（勾选后规则才生效）",
+                        variable=self.enabled_var).grid(
+            row=13, column=0, columnspan=2, sticky="w", **pad)
 
         # 按钮
         btns = ttk.Frame(frm)
-        btns.grid(row=11, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        btns.grid(row=14, column=0, columnspan=2, sticky="e", pady=(10, 0))
         ttk.Button(btns, text="取消", command=self.destroy).pack(side="left", padx=6)
         ttk.Button(btns, text="确定", style="Accent.TButton", command=self._ok).pack(side="left")
 
         # 预填数据
         if rule:
-            self.name_var.set(rule.get("name", ""))
             self.kw_var.set(format_csv(rule.get("keywords", [])))
             self.reply_var.set(format_csv(rule.get("replies", [])))
             self.mode_var.set(mode_to_label(rule.get("reply_mode", "fixed")))
@@ -195,10 +202,9 @@ class RuleDialog(tk.Toplevel):
 
     def _update_hint(self, *_):
         mode = label_to_mode(self.mode_var.get())
-        self.hint_var.set("模式说明：" + MODE_HINTS.get(mode, ""))
+        self.hint_var.set("当前模式说明：" + MODE_HINTS.get(mode, ""))
 
     def _ok(self):
-        name = self.name_var.get().strip()
         keywords = parse_csv(self.kw_var.get())
         replies = parse_csv(self.reply_var.get())
         users = parse_csv(self.users_var.get())
@@ -207,9 +213,6 @@ class RuleDialog(tk.Toplevel):
             priority = int(self.pri_var.get() or 0)
         except ValueError:
             messagebox.showwarning("提示", "冷却和优先级必须是数字", parent=self)
-            return
-        if not name:
-            messagebox.showwarning("提示", "请填写规则名称", parent=self)
             return
         if not keywords:
             messagebox.showwarning("提示", "至少填一个关键词", parent=self)
@@ -221,7 +224,7 @@ class RuleDialog(tk.Toplevel):
             messagebox.showwarning("提示", "冷却和优先级不能为负数", parent=self)
             return
         self.result = {
-            "name": name, "enabled": self.enabled_var.get(),
+            "enabled": self.enabled_var.get(),
             "keywords": keywords, "replies": replies,
             "reply_mode": label_to_mode(self.mode_var.get()),
             "cooldown": cooldown, "priority": priority,
@@ -238,8 +241,8 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("KOOK 自动回复 · 可视化配置")
-        self.geometry("1000x640")
-        self.minsize(860, 560)
+        self.geometry("1020x660")
+        self.minsize(880, 580)
 
         # 视觉主题
         self.style = ttk.Style(self)
@@ -272,6 +275,8 @@ class App(tk.Tk):
         self.btn_start = ttk.Button(top, text="启动", command=self.start_bot,
                                     style="Accent.TButton")
         self.btn_start.pack(side="right", padx=6)
+        ttk.Label(top, text="启动=开始监听并自动回复；停止=结束监听",
+                  foreground="#888").pack(side="right", padx=10)
 
         body = ttk.Frame(self, padding=(10, 4))
         body.pack(fill="both", expand=True)
@@ -301,7 +306,7 @@ class App(tk.Tk):
         lb.pack(fill="x", pady=6)
         ttk.Button(lb, text="删除选中", command=self._delete_selected).pack(side="left", padx=2)
         ttk.Button(lb, text="复制选中", command=self._duplicate_selected).pack(side="left", padx=2)
-        ttk.Label(lb, text="双击行或点「编辑」打开编辑窗口；增删改自动保存",
+        ttk.Label(lb, text="双击行或点「编辑」修改规则；增删改自动保存",
                   foreground="#888").pack(side="left", padx=8)
 
         # ---- 右：基本设置 ----
@@ -311,36 +316,40 @@ class App(tk.Tk):
         self.beh_vars = {}
         self.flag_vars = {}
         rows = [
-            ("同一人回复间隔（秒）", "per_user_cooldown", "0 = 不限"),
-            ("每分钟最多回复", "global_rate", "0 = 不限"),
-            ("静默时段（如 23:00-07:00）", "quiet_hours", "逗号分隔多段"),
-            ("忽略前缀（如 /）", "ignore_prefix", "逗号分隔"),
+            ("同一人回复间隔（秒）", "per_user_cooldown",
+             "同一个人两次回复之间至少隔这么久，防止连续刷屏；0 = 不限"),
+            ("每分钟最多回复", "global_rate",
+             "整个程序每分钟最多回多少条；0 = 不限"),
+            ("静默时段", "quiet_hours",
+             "这个时间段内不回复。格式 HH:MM-HH:MM，如 23:00-07:00；多段用逗号分隔；留空 = 不静默"),
+            ("忽略前缀", "ignore_prefix",
+             "消息以这些字符开头就不回复，如 /（避免回命令）；多个用逗号分隔"),
         ]
         for r, (label, key, hint) in enumerate(rows):
-            ttk.Label(right, text=label).grid(row=r, column=0, sticky="w", pady=5)
+            ttk.Label(right, text=label).grid(row=r * 2, column=0, sticky="w", pady=(5, 0))
             var = tk.StringVar()
-            ttk.Entry(right, textvariable=var, width=24).grid(row=r, column=1, sticky="w", padx=8, pady=5)
+            ttk.Entry(right, textvariable=var, width=24).grid(
+                row=r * 2, column=1, sticky="w", padx=8, pady=(5, 0))
+            ttk.Label(right, text=hint, foreground="#888", wraplength=290,
+                      justify="left").grid(row=r * 2 + 1, column=0, columnspan=2, sticky="w")
             self.beh_vars[key] = var
-        ttk.Label(right, text="提示：" + "；".join(h for _, _, h in rows),
-                  foreground="#888", wraplength=280, justify="left").grid(
-            row=len(rows), column=0, columnspan=2, sticky="w", pady=(2, 6))
 
         sw = ttk.Frame(right)
-        sw.grid(row=len(rows) + 1, column=0, columnspan=2, sticky="w")
-        for key, label in (("ignore_bots", "忽略其他机器人消息"),
-                           ("ignore_system", "忽略系统消息"),
-                           ("hit_log", "记录命中日志")):
+        sw.grid(row=len(rows) * 2 + 1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        for key, label in (("ignore_bots", "忽略其他机器人消息（不回复机器人）"),
+                           ("ignore_system", "忽略系统消息（如进房/退房提示）"),
+                           ("hit_log", "记录命中日志（存到 hits.log，方便排查）")):
             var = tk.BooleanVar()
             ttk.Checkbutton(sw, text=label, variable=var).pack(anchor="w", pady=1)
             self.flag_vars[key] = var
 
         n_wl = len(self.cfg.get("whitelist", {}).get("users", []))
-        ttk.Label(right, text=("旧版全局白名单仍生效（%d 人，仅这些用户可触发全部规则）"
-                               "；如需细分，请在每条规则的「仅回复这些人」里单独设置。" % n_wl),
-                  foreground="#888", wraplength=280, justify="left").grid(
-            row=len(rows) + 2, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        ttk.Label(right, text=("旧版全局白名单仍生效（%d 人，只有这些用户能触发全部规则）。"
+                               "想按规则细分，请在每条规则的「仅回复这些人」里设置。" % n_wl),
+                  foreground="#888", wraplength=290, justify="left").grid(
+            row=len(rows) * 2 + 2, column=0, columnspan=2, sticky="w", pady=(8, 2))
         ttk.Button(right, text="保存设置", command=self._save_behavior).grid(
-            row=len(rows) + 3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+            row=len(rows) * 2 + 3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
         # 底部状态栏
         self.status_var = tk.StringVar(value="就绪")
@@ -365,6 +374,12 @@ class App(tk.Tk):
         n_rules = len(self.cfg.get("rules", []))
         base = "规则 %d 条 · 操作自动保存" % n_rules
         self.status_var.set("%s · %s" % (extra, base) if extra else base)
+
+    def _gen_rule_name(self):
+        """自动生成内部唯一名称（冷却/轮流计数用，用户不可见）"""
+        import time
+        self._name_seq = getattr(self, "_name_seq", 0) + 1
+        return "rule_%d_%d" % (int(time.time() * 1000), self._name_seq)
 
     def _on_cell_click(self, event):
         """点击「编辑/删除」列触发对应操作"""
@@ -395,20 +410,23 @@ class App(tk.Tk):
         if dlg.result is None:
             return
         if idx is None:
-            self.cfg["rules"].append(dlg.result)
-            self.status_var.set("已新增规则：%s" % dlg.result["name"])
+            new_rule = dlg.result
+            new_rule["name"] = self._gen_rule_name()
+            self.cfg["rules"].append(new_rule)
+            self.status_var.set("已新增规则（自动保存）")
         else:
-            self.cfg["rules"][idx] = dlg.result
-            self.status_var.set("已更新规则：%s" % dlg.result["name"])
+            # 编辑：保留原内部名称
+            self.cfg["rules"][idx].update(dlg.result)
+            self.status_var.set("已更新规则（自动保存）")
         self._refresh_rules()
         self._auto_save()
 
     def _delete_rule(self, idx):
-        name = self.cfg["rules"][idx].get("name", "")
-        if messagebox.askyesno("确认", "删除规则「%s」？" % name):
+        keywords = format_csv(self.cfg["rules"][idx].get("keywords", []))[:20]
+        if messagebox.askyesno("确认", "删除这条规则（关键词：%s）？" % keywords):
             del self.cfg["rules"][idx]
             self._refresh_rules()
-            self.status_var.set("已删除规则：%s" % name)
+            self.status_var.set("已删除规则（自动保存）")
             self._auto_save()
 
     def _delete_selected(self):
@@ -423,10 +441,10 @@ class App(tk.Tk):
         import copy
         i = int(sel[0])
         rule = copy.deepcopy(self.cfg["rules"][i])
-        rule["name"] = rule.get("name", "") + "-副本"
+        rule["name"] = self._gen_rule_name()
         self.cfg["rules"].append(rule)
         self._refresh_rules()
-        self.status_var.set("已复制规则：%s（自动保存）" % rule["name"])
+        self.status_var.set("已复制规则（自动保存）")
         self._auto_save()
 
     # ---------- 基本设置 ----------
