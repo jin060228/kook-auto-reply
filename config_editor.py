@@ -343,13 +343,15 @@ class App(tk.Tk):
             ttk.Checkbutton(sw, text=label, variable=var).pack(anchor="w", pady=1)
             self.flag_vars[key] = var
 
-        n_wl = len(self.cfg.get("whitelist", {}).get("users", []))
-        ttk.Label(right, text=("旧版全局白名单仍生效（%d 人，只有这些用户能触发全部规则）。"
-                               "想按规则细分，请在每条规则的「仅回复这些人」里设置。" % n_wl),
-                  foreground="#888", wraplength=290, justify="left").grid(
+        self.wl_label_var = tk.StringVar()
+        self._update_wl_label()
+        ttk.Label(right, textvariable=self.wl_label_var, foreground="#888", wraplength=290,
+                  justify="left").grid(
             row=len(rows) * 2 + 2, column=0, columnspan=2, sticky="w", pady=(8, 2))
+        ttk.Button(right, text="清空全局白名单", command=self._clear_global_whitelist).grid(
+            row=len(rows) * 2 + 3, column=0, columnspan=2, sticky="ew", pady=(2, 0))
         ttk.Button(right, text="保存设置", command=self._save_behavior).grid(
-            row=len(rows) * 2 + 3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+            row=len(rows) * 2 + 4, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
         # 底部状态栏
         self.status_var = tk.StringVar(value="就绪")
@@ -448,6 +450,26 @@ class App(tk.Tk):
         self._auto_save()
 
     # ---------- 基本设置 ----------
+    def _update_wl_label(self):
+        n = len(self.cfg.get("whitelist", {}).get("users", []))
+        if n:
+            self.wl_label_var.set(
+                "全局白名单 %d 人：只有这些用户能触发全部规则。"
+                "想按规则细分，请在每条规则的「仅回复这些人」里设置。" % n)
+        else:
+            self.wl_label_var.set(
+                "全局白名单为空：触发范围完全由每条规则的「仅回复这些人」"
+                "决定（留空 = 任何人）")
+
+    def _clear_global_whitelist(self):
+        if not self.cfg.get("whitelist", {}).get("users"):
+            messagebox.showinfo("提示", "全局白名单已经是空的")
+            return
+        if messagebox.askyesno("确认", "清空全局白名单？之后触发范围完全由每条规则的「仅回复这些人」控制。"):
+            self.cfg["whitelist"]["users"] = []
+            self._update_wl_label()
+            self._auto_save("已清空全局白名单")
+
     def _load_behavior(self):
         b = self.cfg.get("behavior", {})
         self.beh_vars["per_user_cooldown"].set(str(b.get("per_user_cooldown", 0)))
@@ -490,6 +512,13 @@ class App(tk.Tk):
         script = os.path.join(BASE_DIR, "auto_reply.py")
         if not os.path.exists(script):
             messagebox.showerror("错误", "找不到 auto_reply.py")
+            return
+        placeholders = {str(u) for u in self.cfg.get("whitelist", {}).get("users", [])
+                        if str(u) in ("用户ID1", "用户ID2")}
+        if placeholders:
+            messagebox.showwarning(
+                "提示", "全局白名单仍包含占位符「用户ID1/用户ID2」，会拦截所有人。"
+                        "请先点右侧「清空全局白名单」再启动。")
             return
         if self._bot_proc and self._bot_proc.poll() is None:
             messagebox.showinfo("提示", "自动回复已在运行")
