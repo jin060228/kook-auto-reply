@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 title KOOK 自动回复启动器
 echo ============================================
 echo   KOOK 语音频道自动回复 - 一键启动
@@ -25,7 +26,7 @@ tasklist /FI "IMAGENAME eq KOOK.exe" 2>nul | findstr /i "KOOK.exe" >nul
 if %errorlevel%==0 (
     echo   检测到 KOOK 已运行，检查调试端口 %CDP_PORT%...
     curl -s -m 2 http://127.0.0.1:%CDP_PORT%/json/version >nul 2>&1
-    if %errorlevel%==0 (
+    if !errorlevel!==0 (
         echo   CDP 调试端口已开启，直接复用当前 KOOK 实例（不打断语音）。
     ) else (
         echo   当前 KOOK 未开启调试端口，需要重启（语音连接会断开）...
@@ -39,19 +40,15 @@ if %errorlevel%==0 (
     start "" "%KOOK_LAUNCHER%" %CDP_ARGS%
 )
 
-rem ---------- 2. 等待 KOOK 初始化 ----------
+rem ---------- 2. 等待 KOOK 调试端口就绪 ----------
 echo.
-echo [2/3] 等待 KOOK 初始化（15 秒，请确认已登录并进入目标语音频道）...
-timeout /t 15 /nobreak >nul
-
-rem 再次确认调试端口就绪
-echo   确认调试端口...
+echo [2/3] 等待 KOOK 调试端口就绪（最多 45 秒，请确认已登录并进入目标语音频道）...
 set /a tries=0
 :wait_port
 curl -s -m 2 http://127.0.0.1:%CDP_PORT%/json/version >nul 2>&1
 if %errorlevel%==0 goto port_ok
 set /a tries+=1
-if %tries% GEQ 10 (
+if %tries% GEQ 15 (
     echo   [警告] 调试端口未就绪。请确认 KOOK 已启动，并检查是否需要重新登录。
     goto port_fail
 )
