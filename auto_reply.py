@@ -177,6 +177,26 @@ class RuleMatcher:
             return True
         return False
 
+    def _rule_allows(self, rule, msg):
+        """规则级用户过滤：rule.users 为空 = 全部人可触发；
+        否则按 用户ID / 用户名 / 用户名#识别码 任一命中即可"""
+        users = rule.get("users") or []
+        if not users:
+            return True
+        uid = str(msg.get("uid", ""))
+        name = str(msg.get("name", ""))
+        for u in users:
+            u = str(u).strip()
+            if not u:
+                continue
+            if u == uid:
+                return True
+            if u == name:
+                return True
+            if "#" in u and u.split("#", 1)[0] == name:
+                return True
+        return False
+
     def match(self, msg):
         """
         判断一条消息是否应回复，返回命中的 rule dict，否则返回 None。
@@ -212,11 +232,11 @@ class RuleMatcher:
             if uid in self.whitelist:
                 return None
 
-        # 7. 关键词匹配（原样字符 contains），取 priority 最高
+        # 7. 关键词匹配（原样字符 contains）+ 规则级用户过滤，取 priority 最高
         hit = None
         for rule in self.rules:
             keywords = rule.get("keywords", [])
-            if any(kw in content for kw in keywords):
+            if any(kw in content for kw in keywords) and self._rule_allows(rule, msg):
                 if hit is None or rule.get("priority", 0) > hit.get("priority", 0):
                     hit = rule
 

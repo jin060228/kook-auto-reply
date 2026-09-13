@@ -1,12 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-KOOK 自动回复 · 可视化配置程序
+KOOK 自动回复 · 可视化配置程序（单页面版）
 
-功能：
-- 图形化管理关键词规则（增删改、启用/停用、回复模式、冷却、优先级）
-- 管理触发白名单（用户 ID 列表）
-- 调整全局行为（同一人冷却、频率上限、静默时段、忽略前缀）
-- 一键保存配置到 config.yaml、一键启动自动回复脚本
+布局参考：左侧关键词规则列表（每条规则可单独限定触发用户），
+右侧基本设置，顶部启动/停止，编辑规则用弹窗。
+所有规则操作立即保存到 config.yaml。
 
 运行：python config_editor.py
 """
@@ -36,7 +34,6 @@ DEFAULT_CONFIG = {
     "network": {"reconnect": True, "reconnect_backoff": [1, 60],
                 "notify_on_disconnect": True, "verify_channel_on_start": True},
 }
-
 
 # 回复模式：界面显示中文，config.yaml 中仍存英文值（auto_reply.py 使用）
 MODE_LABELS = {"fixed": "固定回复", "random": "随机回复", "sequential": "轮流回复"}
@@ -104,17 +101,147 @@ def format_csv(items):
 
 
 # ---------------------------------------------------------------------------
-# 图形界面
+# 规则编辑弹窗
+# ---------------------------------------------------------------------------
+
+class RuleDialog(tk.Toplevel):
+    """新增/编辑规则弹窗；确定后通过 result 返回规则 dict，取消返回 None"""
+
+    def __init__(self, parent, rule=None):
+        super().__init__(parent)
+        self.title("编辑规则" if rule else "新增规则")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.result = None
+        self._rule = rule
+
+        pad = {"padx": 12, "pady": 4}
+        frm = ttk.Frame(self, padding=14)
+        frm.pack(fill="both", expand=True)
+
+        # 名称（内部标识，用于轮流回复与冷却区分）
+        ttk.Label(frm, text="名称（内部标识）").grid(row=0, column=0, sticky="w", **pad)
+        self.name_var = tk.StringVar()
+        ttk.Entry(frm, textvariable=self.name_var, width=40).grid(row=0, column=1, sticky="w", **pad)
+
+        # 关键词
+        ttk.Label(frm, text="关键词（逗号分隔）").grid(row=1, column=0, sticky="w", **pad)
+        self.kw_var = tk.StringVar()
+        ttk.Entry(frm, textvariable=self.kw_var, width=40).grid(row=1, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="消息里包含任一关键词即触发（原样字符匹配）",
+                  foreground="#888").grid(row=2, column=1, sticky="w", **pad)
+
+        # 回复内容
+        ttk.Label(frm, text="回复内容（逗号分隔）").grid(row=3, column=0, sticky="w", **pad)
+        self.reply_var = tk.StringVar()
+        ttk.Entry(frm, textvariable=self.reply_var, width=40).grid(row=3, column=1, sticky="w", **pad)
+
+        # 回复模式
+        ttk.Label(frm, text="回复模式").grid(row=4, column=0, sticky="w", **pad)
+        self.mode_var = tk.StringVar(value="固定回复")
+        ttk.Combobox(frm, textvariable=self.mode_var, values=list(MODE_LABELS.values()),
+                     state="readonly", width=20).grid(row=4, column=1, sticky="w", **pad)
+        self.hint_var = tk.StringVar()
+        ttk.Label(frm, textvariable=self.hint_var, foreground="#888").grid(
+            row=5, column=1, sticky="w", **pad)
+        self.mode_var.trace_add("write", self._update_hint)
+        self._update_hint()
+
+        # 冷却 / 优先级
+        ttk.Label(frm, text="冷却（秒）").grid(row=6, column=0, sticky="w", **pad)
+        self.cd_var = tk.StringVar(value="0")
+        ttk.Entry(frm, textvariable=self.cd_var, width=12).grid(row=6, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="优先级（大者优先）").grid(row=7, column=0, sticky="w", **pad)
+        self.pri_var = tk.StringVar(value="0")
+        ttk.Entry(frm, textvariable=self.pri_var, width=12).grid(row=7, column=1, sticky="w", **pad)
+
+        # 仅回复这些人
+        ttk.Label(frm, text="仅回复这些人").grid(row=8, column=0, sticky="nw", **pad)
+        self.users_var = tk.StringVar()
+        ttk.Entry(frm, textvariable=self.users_var, width=40).grid(row=8, column=1, sticky="w", **pad)
+        ttk.Label(frm, text="可选。填用户ID或用户名，逗号分隔，如：10001, BD-小锦#2059\n留空 = 任何人都能触发",
+                  foreground="#888", justify="left").grid(row=9, column=1, sticky="w", **pad)
+
+        # 启用
+        self.enabled_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(frm, text="启用这条规则", variable=self.enabled_var).grid(
+            row=10, column=0, columnspan=2, sticky="w", **pad)
+
+        # 按钮
+        btns = ttk.Frame(frm)
+        btns.grid(row=11, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        ttk.Button(btns, text="取消", command=self.destroy).pack(side="left", padx=6)
+        ttk.Button(btns, text="确定", style="Accent.TButton", command=self._ok).pack(side="left")
+
+        # 预填数据
+        if rule:
+            self.name_var.set(rule.get("name", ""))
+            self.kw_var.set(format_csv(rule.get("keywords", [])))
+            self.reply_var.set(format_csv(rule.get("replies", [])))
+            self.mode_var.set(mode_to_label(rule.get("reply_mode", "fixed")))
+            self.cd_var.set(str(rule.get("cooldown", 0)))
+            self.pri_var.set(str(rule.get("priority", 0)))
+            self.users_var.set(format_csv(rule.get("users", [])))
+            self.enabled_var.set(bool(rule.get("enabled", True)))
+
+        self.grab_set()
+        self.bind("<Return>", lambda _e: self._ok())
+        self.bind("<Escape>", lambda _e: self.destroy())
+        self.update_idletasks()
+        # 居中于父窗口
+        x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
+        self.geometry("+%d+%d" % (max(x, 0), max(y, 0)))
+
+    def _update_hint(self, *_):
+        mode = label_to_mode(self.mode_var.get())
+        self.hint_var.set("模式说明：" + MODE_HINTS.get(mode, ""))
+
+    def _ok(self):
+        name = self.name_var.get().strip()
+        keywords = parse_csv(self.kw_var.get())
+        replies = parse_csv(self.reply_var.get())
+        users = parse_csv(self.users_var.get())
+        try:
+            cooldown = int(self.cd_var.get() or 0)
+            priority = int(self.pri_var.get() or 0)
+        except ValueError:
+            messagebox.showwarning("提示", "冷却和优先级必须是数字", parent=self)
+            return
+        if not name:
+            messagebox.showwarning("提示", "请填写规则名称", parent=self)
+            return
+        if not keywords:
+            messagebox.showwarning("提示", "至少填一个关键词", parent=self)
+            return
+        if not replies:
+            messagebox.showwarning("提示", "至少填一条回复", parent=self)
+            return
+        if cooldown < 0 or priority < 0:
+            messagebox.showwarning("提示", "冷却和优先级不能为负数", parent=self)
+            return
+        self.result = {
+            "name": name, "enabled": self.enabled_var.get(),
+            "keywords": keywords, "replies": replies,
+            "reply_mode": label_to_mode(self.mode_var.get()),
+            "cooldown": cooldown, "priority": priority,
+            "users": users,
+        }
+        self.destroy()
+
+
+# ---------------------------------------------------------------------------
+# 主窗口
 # ---------------------------------------------------------------------------
 
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("KOOK 自动回复 · 可视化配置")
-        self.geometry("1000x660")
-        self.minsize(820, 560)
+        self.geometry("1000x640")
+        self.minsize(860, 560)
 
-        # 视觉主题：clam 更现代；强调按钮（启动自动回复）用绿色
+        # 视觉主题
         self.style = ttk.Style(self)
         try:
             self.style.theme_use("clam")
@@ -127,312 +254,182 @@ class App(tk.Tk):
         self.style.configure("Treeview", rowheight=24)
 
         self.cfg = load_config()
+        self._bot_proc = None
         self._build_ui()
         self._refresh_rules()
-        self._refresh_whitelist()
         self._load_behavior()
 
     # ---------- 界面搭建 ----------
     def _build_ui(self):
-        self.notebook = ttk.Notebook(self)
-        self.notebook.pack(fill="both", expand=True, padx=8, pady=(8, 4))
+        # 顶部：状态 + 启动/停止
+        top = ttk.Frame(self, padding=(10, 8))
+        top.pack(fill="x")
+        ttk.Label(top, text="KOOK 自动回复", font=("", 11, "bold")).pack(side="left")
+        self.state_var = tk.StringVar(value="未启动")
+        ttk.Label(top, textvariable=self.state_var, foreground="#555").pack(side="left", padx=(10, 0))
+        self.btn_stop = ttk.Button(top, text="停止", command=self.stop_bot, state="disabled")
+        self.btn_stop.pack(side="right")
+        self.btn_start = ttk.Button(top, text="启动", command=self.start_bot,
+                                    style="Accent.TButton")
+        self.btn_start.pack(side="right", padx=6)
 
-        self._build_rules_tab()
-        self._build_whitelist_tab()
-        self._build_behavior_tab()
+        body = ttk.Frame(self, padding=(10, 4))
+        body.pack(fill="both", expand=True)
 
-        # 底部按钮
-        bar = ttk.Frame(self)
-        bar.pack(fill="x", padx=8, pady=8)
-        self.status_var = tk.StringVar(value="就绪")
-        ttk.Label(bar, textvariable=self.status_var, foreground="#555").pack(side="left")
-        ttk.Button(bar, text="保存配置", command=self.save).pack(side="right", padx=4)
-        ttk.Button(bar, text="启动自动回复", command=self.start_bot,
-                   style="Accent.TButton").pack(side="right", padx=4)
-        ttk.Button(bar, text="退出", command=self.destroy).pack(side="right", padx=4)
+        # ---- 左：关键词规则 ----
+        left = ttk.Frame(body)
+        left.pack(side="left", fill="both", expand=True)
+        lh = ttk.Frame(left)
+        lh.pack(fill="x")
+        ttk.Label(lh, text="关键词规则", font=("", 10, "bold")).pack(side="left")
+        ttk.Button(lh, text="+ 新增规则", command=lambda: self._open_editor(None)).pack(side="right")
 
-    def _build_rules_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text=" 关键词规则 ")
-
-        # 左侧列表
-        left = ttk.Frame(tab)
-        left.pack(side="left", fill="both", expand=True, padx=(0, 6), pady=6)
-        self.rule_tree = ttk.Treeview(left, columns=("enabled", "keywords", "replies", "mode", "cd", "pri"),
-                                      show="headings", selectmode="browse")
-        self.rule_tree.heading("enabled", text="启用")
-        self.rule_tree.heading("keywords", text="关键词")
-        self.rule_tree.heading("replies", text="回复")
-        self.rule_tree.heading("mode", text="模式")
-        self.rule_tree.heading("cd", text="冷却")
-        self.rule_tree.heading("pri", text="优先级")
-        for col, w in zip(("enabled", "keywords", "replies", "mode", "cd", "pri"),
-                          (44, 180, 180, 90, 50, 60)):
+        self.rule_tree = ttk.Treeview(
+            left, columns=("enabled", "keywords", "replies", "users", "edit", "del"),
+            show="headings", selectmode="browse")
+        heads = [("enabled", "启用"), ("keywords", "关键词"), ("replies", "回复内容"),
+                 ("users", "仅限用户"), ("edit", "编辑"), ("del", "删除")]
+        widths = [40, 150, 170, 130, 45, 45]
+        for (col, text), w in zip(heads, widths):
+            self.rule_tree.heading(col, text=text)
             self.rule_tree.column(col, width=w, anchor="center")
-        self.rule_tree.pack(fill="both", expand=True)
-        self.rule_tree.bind("<<TreeviewSelect>>", self._on_rule_select)
+        self.rule_tree.pack(fill="both", expand=True, pady=(6, 0))
+        self.rule_tree.bind("<Double-1>", self._on_double_click)
+        self.rule_tree.bind("<Button-1>", self._on_cell_click)
 
-        btns = ttk.Frame(left)
-        btns.pack(fill="x", pady=4)
-        ttk.Button(btns, text="添加规则", command=self.add_rule).pack(side="left", padx=2)
-        ttk.Button(btns, text="删除选中", command=self.delete_rule).pack(side="left", padx=2)
-        ttk.Button(btns, text="复制选中", command=self.duplicate_rule).pack(side="left", padx=2)
+        lb = ttk.Frame(left)
+        lb.pack(fill="x", pady=6)
+        ttk.Button(lb, text="删除选中", command=self._delete_selected).pack(side="left", padx=2)
+        ttk.Button(lb, text="复制选中", command=self._duplicate_selected).pack(side="left", padx=2)
+        ttk.Label(lb, text="双击行或点「编辑」打开编辑窗口；增删改自动保存",
+                  foreground="#888").pack(side="left", padx=8)
 
-        # 右侧编辑表单
-        right = ttk.LabelFrame(tab, text=" 编辑规则 ")
-        right.pack(side="right", fill="y", padx=(6, 0), pady=6)
-        self.form = {}
-        rows = [
-            ("名称", "name", None),
-            ("关键词（逗号分隔）", "keywords", None),
-            ("回复（逗号分隔）", "replies", None),
-            ("回复模式", "reply_mode", ("random", "fixed", "sequential")),
-            ("冷却（秒）", "cooldown", None),
-            ("优先级（大者优先）", "priority", None),
-        ]
-        for r, (label, key, values) in enumerate(rows):
-            ttk.Label(right, text=label).grid(row=r, column=0, sticky="w", padx=6, pady=4)
-            if values:
-                var = tk.StringVar()
-                box = ttk.Combobox(right, textvariable=var,
-                                   values=list(MODE_LABELS.values()),
-                                   state="readonly", width=18)
-                box.current(0)
-                self.form[key] = box
-            else:
-                var = tk.StringVar()
-                ent = ttk.Entry(right, textvariable=var, width=24)
-                self.form[key] = ent
-            self.form[key].grid(row=r, column=1, sticky="w", padx=6, pady=4)
+        # ---- 右：基本设置 ----
+        right = ttk.LabelFrame(body, text=" 基本设置 ", padding=12)
+        right.pack(side="right", fill="y", padx=(10, 0))
 
-        # 回复模式说明（随选择动态更新）
-        hint_row = len(rows)
-        self.mode_hint_var = tk.StringVar()
-        ttk.Label(right, textvariable=self.mode_hint_var, foreground="#888",
-                  wraplength=240, justify="left").grid(
-            row=hint_row, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
-        self.form["reply_mode"].bind("<<ComboboxSelected>>", self._update_mode_hint)
-        self._update_mode_hint()
-
-        enabled_row = hint_row + 1
-        self.form["enabled_var"] = tk.BooleanVar(value=True)
-        ttk.Checkbutton(right, text="启用此规则", variable=self.form["enabled_var"]).grid(
-            row=enabled_row, column=0, columnspan=2, sticky="w", padx=6, pady=4)
-        ttk.Button(right, text="应用到选中规则", command=self.apply_rule).grid(
-            row=enabled_row + 1, column=0, columnspan=2, sticky="ew", padx=6, pady=8)
-
-    def _build_whitelist_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text=" 触发白名单 ")
-
-        ttk.Label(tab, text="只有下列用户 ID 发的消息才会触发自动回复（留空 = 全部忽略）").pack(anchor="w", padx=8, pady=(8, 2))
-        ttk.Label(tab, text="提示：KOOK 开启开发者模式后，右键用户头像可复制用户 ID", foreground="#777").pack(anchor="w", padx=8)
-
-        self.whitelist_box = tk.Listbox(tab, height=12)
-        self.whitelist_box.pack(fill="both", expand=True, padx=8, pady=6)
-
-        row = ttk.Frame(tab)
-        row.pack(fill="x", padx=8)
-        self.whitelist_entry = ttk.Entry(row, width=24)
-        self.whitelist_entry.pack(side="left")
-        ttk.Button(row, text="添加", command=self.add_whitelist).pack(side="left", padx=4)
-        ttk.Button(row, text="删除选中", command=self.delete_whitelist).pack(side="left", padx=4)
-        ttk.Button(row, text="清空", command=self.clear_whitelist).pack(side="left", padx=4)
-
-    def _build_behavior_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text=" 全局设置 ")
-
-        form = ttk.Frame(tab)
-        form.pack(anchor="w", padx=12, pady=12)
         self.beh_vars = {}
+        self.flag_vars = {}
         rows = [
-            ("同一人冷却（秒）", "per_user_cooldown", "0 = 不限"),
+            ("同一人回复间隔（秒）", "per_user_cooldown", "0 = 不限"),
             ("每分钟最多回复", "global_rate", "0 = 不限"),
-            ("静默时段（如 23:00-07:00）", "quiet_hours", "逗号分隔多段，留空 = 不静默"),
+            ("静默时段（如 23:00-07:00）", "quiet_hours", "逗号分隔多段"),
             ("忽略前缀（如 /）", "ignore_prefix", "逗号分隔"),
         ]
         for r, (label, key, hint) in enumerate(rows):
-            ttk.Label(form, text=label).grid(row=r, column=0, sticky="w", pady=6)
+            ttk.Label(right, text=label).grid(row=r, column=0, sticky="w", pady=5)
             var = tk.StringVar()
-            ttk.Entry(form, textvariable=var, width=30).grid(row=r, column=1, sticky="w", padx=8, pady=6)
-            ttk.Label(form, text=hint, foreground="#888").grid(row=r, column=2, sticky="w")
+            ttk.Entry(right, textvariable=var, width=24).grid(row=r, column=1, sticky="w", padx=8, pady=5)
             self.beh_vars[key] = var
+        ttk.Label(right, text="提示：" + "；".join(h for _, _, h in rows),
+                  foreground="#888", wraplength=280, justify="left").grid(
+            row=len(rows), column=0, columnspan=2, sticky="w", pady=(2, 6))
 
-        # 开关
-        sw = ttk.Frame(tab)
-        sw.pack(anchor="w", padx=12)
-        self.flag_vars = {}
+        sw = ttk.Frame(right)
+        sw.grid(row=len(rows) + 1, column=0, columnspan=2, sticky="w")
         for key, label in (("ignore_bots", "忽略其他机器人消息"),
                            ("ignore_system", "忽略系统消息"),
                            ("hit_log", "记录命中日志")):
             var = tk.BooleanVar()
-            ttk.Checkbutton(sw, text=label, variable=var).pack(anchor="w", pady=2)
+            ttk.Checkbutton(sw, text=label, variable=var).pack(anchor="w", pady=1)
             self.flag_vars[key] = var
 
-        ttk.Label(tab, text="提示：quiet_hours 格式为 HH:MM-HH:MM，跨天用 23:00-07:00 表示",
-                  foreground="#777").pack(anchor="w", padx=12, pady=(6, 0))
+        n_wl = len(self.cfg.get("whitelist", {}).get("users", []))
+        ttk.Label(right, text=("旧版全局白名单仍生效（%d 人，仅这些用户可触发全部规则）"
+                               "；如需细分，请在每条规则的「仅回复这些人」里单独设置。" % n_wl),
+                  foreground="#888", wraplength=280, justify="left").grid(
+            row=len(rows) + 2, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        ttk.Button(right, text="保存设置", command=self._save_behavior).grid(
+            row=len(rows) + 3, column=0, columnspan=2, sticky="ew", pady=(6, 0))
 
-    # ---------- 规则页逻辑 ----------
-    def _update_mode_hint(self, _event=None):
-        mode = label_to_mode(self.form["reply_mode"].get())
-        self.mode_hint_var.set("模式说明：" + MODE_HINTS.get(mode, ""))
+        # 底部状态栏
+        self.status_var = tk.StringVar(value="就绪")
+        ttk.Label(self, textvariable=self.status_var, foreground="#555",
+                  padding=(10, 4)).pack(fill="x", side="bottom")
 
+    # ---------- 规则列表 ----------
     def _refresh_rules(self):
         self.rule_tree.delete(*self.rule_tree.get_children())
         for i, r in enumerate(self.cfg.get("rules", [])):
+            users = r.get("users") or []
             self.rule_tree.insert("", "end", iid=str(i), values=(
                 "是" if r.get("enabled", True) else "否",
-                format_csv(r.get("keywords", []))[:30],
-                format_csv(r.get("replies", []))[:30],
-                mode_to_label(r.get("reply_mode", "fixed")),
-                r.get("cooldown", 0),
-                r.get("priority", 0),
+                format_csv(r.get("keywords", []))[:22],
+                format_csv(r.get("replies", []))[:22],
+                format_csv(users)[:20] if users else "全部",
+                "编辑", "删",
             ))
         self._update_status()
 
     def _update_status(self, extra=None):
         n_rules = len(self.cfg.get("rules", []))
-        n_wl = len(self.cfg.get("whitelist", {}).get("users", []))
-        base = "规则 %d 条 · 白名单 %d 人" % (n_rules, n_wl)
+        base = "规则 %d 条 · 操作自动保存" % n_rules
         self.status_var.set("%s · %s" % (extra, base) if extra else base)
 
-    def _on_rule_select(self, _event=None):
+    def _on_cell_click(self, event):
+        """点击「编辑/删除」列触发对应操作"""
+        if self.rule_tree.identify("region", event.x, event.y) != "cell":
+            return
+        row = self.rule_tree.identify_row(event.y)
+        col = self.rule_tree.identify_column(event.x)
+        if not row or not col:
+            return
+        col_idx = int(col.replace("#", "")) - 1
+        iid = int(row)
+        if 0 <= iid < len(self.cfg.get("rules", [])):
+            if col_idx == 4:
+                self._open_editor(iid)
+            elif col_idx == 5:
+                self._delete_rule(iid)
+
+    def _on_double_click(self, _event=None):
         sel = self.rule_tree.selection()
-        if not sel:
-            return
-        i = int(sel[0])
-        rules = self.cfg.get("rules", [])
-        if 0 <= i < len(rules):
-            r = rules[i]
-            self.form["name"].delete(0, "end")
-            self.form["name"].insert(0, r.get("name", ""))
-            self.form["keywords"].delete(0, "end")
-            self.form["keywords"].insert(0, format_csv(r.get("keywords", [])))
-            self.form["replies"].delete(0, "end")
-            self.form["replies"].insert(0, format_csv(r.get("replies", [])))
-            mode = r.get("reply_mode", "fixed")
-            self.form["reply_mode"].set(mode_to_label(mode))
-            self._update_mode_hint()
-            self.form["cooldown"].delete(0, "end")
-            self.form["cooldown"].insert(0, str(r.get("cooldown", 0)))
-            self.form["priority"].delete(0, "end")
-            self.form["priority"].insert(0, str(r.get("priority", 0)))
-            self.form["enabled_var"].set(bool(r.get("enabled", True)))
-            # 状态栏展示该条规则的完整关键词与回复（列表截断之外的补充）
-            self._update_status("关键词：%s → 回复：%s" % (
-                format_csv(r.get("keywords", [])), format_csv(r.get("replies", []))))
+        if sel:
+            self._open_editor(int(sel[0]))
 
-    def _get_form_values(self):
-        """从表单读取规则字段，返回 dict 或抛 ValueError"""
-        name = self.form["name"].get().strip()
-        keywords = parse_csv(self.form["keywords"].get())
-        replies = parse_csv(self.form["replies"].get())
-        mode = label_to_mode(self.form["reply_mode"].get())
-        cooldown = int(self.form["cooldown"].get() or 0)
-        priority = int(self.form["priority"].get() or 0)
-        if not name:
-            raise ValueError("规则名称不能为空")
-        if not keywords:
-            raise ValueError("至少填一个关键词")
-        if not replies:
-            raise ValueError("至少填一条回复")
-        if cooldown < 0 or priority < 0:
-            raise ValueError("冷却和优先级不能为负数")
-        return {
-            "name": name, "enabled": self.form["enabled_var"].get(),
-            "keywords": keywords, "replies": replies,
-            "reply_mode": mode, "cooldown": cooldown, "priority": priority,
-        }
-
-    def add_rule(self):
-        try:
-            rule = self._get_form_values()
-        except ValueError as e:
-            messagebox.showwarning("提示", str(e))
+    def _open_editor(self, idx):
+        """idx 为 None=新增；否则编辑对应规则"""
+        rule = self.cfg["rules"][idx] if idx is not None else None
+        dlg = RuleDialog(self, rule=rule)
+        self.wait_window(dlg)
+        if dlg.result is None:
             return
-        self.cfg["rules"].append(rule)
+        if idx is None:
+            self.cfg["rules"].append(dlg.result)
+            self.status_var.set("已新增规则：%s" % dlg.result["name"])
+        else:
+            self.cfg["rules"][idx] = dlg.result
+            self.status_var.set("已更新规则：%s" % dlg.result["name"])
         self._refresh_rules()
-        self.rule_tree.selection_set(str(len(self.cfg["rules"]) - 1))
-        self.status_var.set("已添加规则：%s（记得保存）" % rule["name"])
+        self._auto_save()
 
-    def apply_rule(self):
-        sel = self.rule_tree.selection()
-        if not sel:
-            messagebox.showinfo("提示", "请先在左侧选择一条规则")
-            return
-        try:
-            rule = self._get_form_values()
-        except ValueError as e:
-            messagebox.showwarning("提示", str(e))
-            return
-        i = int(sel[0])
-        self.cfg["rules"][i] = rule
-        self._refresh_rules()
-        self.rule_tree.selection_set(str(i))
-        self.status_var.set("已更新规则：%s（记得保存）" % rule["name"])
-
-    def delete_rule(self):
-        sel = self.rule_tree.selection()
-        if not sel:
-            return
-        i = int(sel[0])
-        name = self.cfg["rules"][i].get("name", "")
+    def _delete_rule(self, idx):
+        name = self.cfg["rules"][idx].get("name", "")
         if messagebox.askyesno("确认", "删除规则「%s」？" % name):
-            del self.cfg["rules"][i]
+            del self.cfg["rules"][idx]
             self._refresh_rules()
-            self.status_var.set("已删除规则（记得保存）")
+            self.status_var.set("已删除规则：%s" % name)
+            self._auto_save()
 
-    def duplicate_rule(self):
+    def _delete_selected(self):
+        sel = self.rule_tree.selection()
+        if sel:
+            self._delete_rule(int(sel[0]))
+
+    def _duplicate_selected(self):
         sel = self.rule_tree.selection()
         if not sel:
             return
-        i = int(sel[0])
         import copy
+        i = int(sel[0])
         rule = copy.deepcopy(self.cfg["rules"][i])
         rule["name"] = rule.get("name", "") + "-副本"
         self.cfg["rules"].append(rule)
         self._refresh_rules()
-        self.rule_tree.selection_set(str(len(self.cfg["rules"]) - 1))
-        self.status_var.set("已复制规则（记得保存）")
+        self.status_var.set("已复制规则：%s（自动保存）" % rule["name"])
+        self._auto_save()
 
-    # ---------- 白名单页逻辑 ----------
-    def _refresh_whitelist(self):
-        self.whitelist_box.delete(0, "end")
-        for uid in self.cfg.get("whitelist", {}).get("users", []):
-            self.whitelist_box.insert("end", str(uid))
-        self._update_status()
-
-    def add_whitelist(self):
-        uid = self.whitelist_entry.get().strip()
-        if not uid:
-            messagebox.showinfo("提示", "请输入用户 ID")
-            return
-        users = self.cfg["whitelist"]["users"]
-        if uid not in users:
-            users.append(uid)
-            self._refresh_whitelist()
-            self.whitelist_entry.delete(0, "end")
-            self.status_var.set("已添加白名单：%s（记得保存）" % uid)
-        else:
-            messagebox.showinfo("提示", "该用户已在白名单中")
-
-    def delete_whitelist(self):
-        sel = self.whitelist_box.curselection()
-        if not sel:
-            return
-        users = self.cfg["whitelist"]["users"]
-        del users[sel[0]]
-        self._refresh_whitelist()
-        self.status_var.set("已删除（记得保存）")
-
-    def clear_whitelist(self):
-        if messagebox.askyesno("确认", "清空全部白名单？"):
-            self.cfg["whitelist"]["users"] = []
-            self._refresh_whitelist()
-            self.status_var.set("已清空白名单（记得保存）")
-
-    # ---------- 全局设置页逻辑 ----------
+    # ---------- 基本设置 ----------
     def _load_behavior(self):
         b = self.cfg.get("behavior", {})
         self.beh_vars["per_user_cooldown"].set(str(b.get("per_user_cooldown", 0)))
@@ -444,48 +441,77 @@ class App(tk.Tk):
         self.flag_vars["hit_log"].set(bool(self.cfg.get("logging", {}).get("hit_log", True)))
 
     def _collect_behavior(self):
-        b = self.cfg.setdefault("behavior", {})
-        b["per_user_cooldown"] = int(self.beh_vars["per_user_cooldown"].get() or 0)
-        b["global_rate"] = int(self.beh_vars["global_rate"].get() or 0)
+        try:
+            b = self.cfg.setdefault("behavior", {})
+            b["per_user_cooldown"] = int(self.beh_vars["per_user_cooldown"].get() or 0)
+            b["global_rate"] = int(self.beh_vars["global_rate"].get() or 0)
+        except ValueError:
+            messagebox.showwarning("提示", "数值格式不正确，请检查")
+            return False
         b["quiet_hours"] = parse_csv(self.beh_vars["quiet_hours"].get())
         b["ignore_prefix"] = parse_csv(self.beh_vars["ignore_prefix"].get())
         b["ignore_bots"] = bool(self.flag_vars["ignore_bots"].get())
         b["ignore_system"] = bool(self.flag_vars["ignore_system"].get())
         self.cfg.setdefault("logging", {})["hit_log"] = bool(self.flag_vars["hit_log"].get())
+        return True
 
-    # ---------- 保存 / 启动 ----------
-    def save(self):
-        try:
-            self._collect_behavior()
-        except ValueError:
-            messagebox.showwarning("提示", "全局设置中的数值格式不正确，请检查")
-            return
+    def _save_behavior(self):
+        if self._collect_behavior():
+            self._auto_save("已保存设置")
+
+    def _auto_save(self, note="已自动保存"):
         try:
             save_config(self.cfg)
+            self.status_var.set("%s（config.yaml）" % note)
         except Exception as e:
             messagebox.showerror("错误", "保存失败：%s" % e)
-            return
-        self.status_var.set("已保存到 config.yaml")
 
+    # ---------- 启动 / 停止 ----------
     def start_bot(self):
         py = sys.executable
         script = os.path.join(BASE_DIR, "auto_reply.py")
         if not os.path.exists(script):
             messagebox.showerror("错误", "找不到 auto_reply.py")
             return
+        if self._bot_proc and self._bot_proc.poll() is None:
+            messagebox.showinfo("提示", "自动回复已在运行")
+            return
         try:
             if sys.platform == "win32":
-                subprocess.Popen([py, script], creationflags=subprocess.CREATE_NEW_CONSOLE,
-                                 cwd=BASE_DIR)
+                self._bot_proc = subprocess.Popen(
+                    [py, script], creationflags=subprocess.CREATE_NEW_CONSOLE, cwd=BASE_DIR)
             else:
-                subprocess.Popen([py, script], cwd=BASE_DIR)
-            self.status_var.set("已启动自动回复（新窗口）")
+                self._bot_proc = subprocess.Popen([py, script], cwd=BASE_DIR)
         except Exception as e:
             messagebox.showerror("错误", "启动失败：%s" % e)
+            return
+        self.state_var.set("运行中")
+        self.btn_start.config(state="disabled")
+        self.btn_stop.config(state="normal")
+        self.status_var.set("自动回复已启动（新窗口），日志见 hits.log")
+
+    def stop_bot(self):
+        if self._bot_proc and self._bot_proc.poll() is None:
+            try:
+                self._bot_proc.terminate()
+            except Exception:
+                pass
+            self.status_var.set("已发送停止指令")
+        self.state_var.set("未启动")
+        self.btn_start.config(state="normal")
+        self.btn_stop.config(state="disabled")
+
+    def _on_close(self):
+        if self._bot_proc and self._bot_proc.poll() is None:
+            if messagebox.askyesno("确认", "自动回复仍在运行，确定退出配置程序？（不会停止自动回复）"):
+                self.destroy()
+        else:
+            self.destroy()
 
 
 def main():
     app = App()
+    app.protocol("WM_DELETE_WINDOW", app._on_close)
     app.mainloop()
 
 

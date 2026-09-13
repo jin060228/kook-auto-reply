@@ -36,8 +36,8 @@ BASE_CONFIG = {
 }
 
 
-def msg(uid="10001", content="在吗", mid="m1", mtype=9):
-    return {"uid": uid, "content": content, "id": mid, "type": mtype, "name": "tester"}
+def msg(uid="10001", content="在吗", mid="m1", mtype=9, name="tester"):
+    return {"uid": uid, "content": content, "id": mid, "type": mtype, "name": name}
 
 
 class TestWhiteList(unittest.TestCase):
@@ -55,6 +55,45 @@ class TestWhiteList(unittest.TestCase):
         m = RuleMatcher(cfg)
         self.assertIsNone(m.match(msg(uid="10001", content="在吗", mid="x3")))
         self.assertIsNotNone(m.match(msg(uid="99999", content="在吗", mid="x4")))
+
+
+class TestRuleUsers(unittest.TestCase):
+    """规则级 users 过滤（仅回复这些人）"""
+
+    def _rule_cfg(self, users):
+        cfg = copy.deepcopy(BASE_CONFIG)
+        cfg["whitelist"] = {"users": []}  # 关闭全局白名单，只测规则级
+        cfg["rules"] = [{
+            "name": "定向", "enabled": True,
+            "keywords": ["上号"], "replies": ["收到"],
+            "reply_mode": "fixed", "cooldown": 0, "priority": 1,
+            "users": users,
+        }]
+        return cfg
+
+    def test_users_空_全部可触发(self):
+        m = RuleMatcher(self._rule_cfg([]))
+        self.assertIsNotNone(m.match(msg(uid="10001", content="上号", mid="u1")))
+        self.assertIsNotNone(m.match(msg(uid="99999", content="上号", mid="u2")))
+
+    def test_users_命中uid(self):
+        m = RuleMatcher(self._rule_cfg(["10001"]))
+        self.assertIsNotNone(m.match(msg(uid="10001", content="上号", mid="u3")))
+        self.assertIsNone(m.match(msg(uid="99999", content="上号", mid="u4")))
+
+    def test_users_命中用户名(self):
+        m = RuleMatcher(self._rule_cfg(["BD-小锦"]))
+        self.assertIsNotNone(m.match(msg(uid="10001", name="BD-小锦", content="上号", mid="u5")))
+        self.assertIsNone(m.match(msg(uid="10001", name="其他人", content="上号", mid="u6")))
+
+    def test_users_用户名带识别码(self):
+        m = RuleMatcher(self._rule_cfg(["BD-小锦#2059"]))
+        self.assertIsNotNone(m.match(msg(uid="10001", name="BD-小锦", content="上号", mid="u7")))
+
+    def test_users_多用户任一命中(self):
+        m = RuleMatcher(self._rule_cfg(["AAA", "10002"]))
+        self.assertIsNotNone(m.match(msg(uid="10002", name="tester", content="上号", mid="u8")))
+        self.assertIsNone(m.match(msg(uid="10003", name="tester", content="上号", mid="u9")))
 
 
 class TestKeywordMatch(unittest.TestCase):
