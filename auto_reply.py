@@ -113,6 +113,20 @@ def load_config(path=CONFIG_PATH):
         return yaml.safe_load(f)
 
 
+LOG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_reply.log")
+
+
+def log(msg):
+    """写日志到 auto_reply.log（UTF-8，追加），同时打印到控制台"""
+    line = "[%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg)
+    print(line)
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except Exception:
+        pass
+
+
 class RuleMatcher:
     """
     纯逻辑匹配器：白名单 -> 关键词(原样字符 contains) -> 冷却 -> 频控。
@@ -302,14 +316,21 @@ class CDPClient:
         self.msg_id = 0
 
     def find_page(self):
-        """从调试服务找到频道页面 target"""
+        """从调试服务找到频道页面 target；优先精确匹配 config 里的目标频道"""
         import urllib.request
         with urllib.request.urlopen(self.http_base + "/json", timeout=5) as resp:
             targets = json.loads(resp.read().decode("utf-8"))
-        for t in targets:
-            if t.get("type") == "page" and "/app/channels/" in t.get("url", ""):
-                return t
-        return None
+        pages = [t for t in targets if t.get("type") == "page" and "/app/channels/" in t.get("url", "")]
+        if not pages:
+            return None
+        cfg = load_config()
+        want_sid = str(cfg.get("target", {}).get("server_id", ""))
+        want_cid = str(cfg.get("target", {}).get("channel_id", ""))
+        if want_sid and want_cid:
+            for t in pages:
+                if "/app/channels/%s/%s" % (want_sid, want_cid) in t.get("url", ""):
+                    return t
+        return pages[0]
 
     def connect(self):
         page = self.find_page()
@@ -377,46 +398,61 @@ class CDPClient:
 
 
 def main():
+    log("=== 自动回复启动 ===")
     config = load_config()
     if not config.get("enable", True):
-        print("config.enable = false，已停用，退出")
+        log("config.enable = false，已停用，退出")
         return
 
     matcher = RuleMatcher(config)
     cdp = CDPClient()
 
-    print("连接 KOOK 客户端...")
-    cdp.connect()
-    print("注入消息监听...")
-    status = cdp.inject()
-    print("注入状态:", status)
-    if status in ("container-not-found", None):
-        print("错误：未找到语音频道消息容器，请确认已进入语音频道")
-        return
-
-    print(f"自动回复已启动（轮询间隔 {int(cdp.poll_interval * 1000)}ms）。按 Ctrl+C 停止。")
     try:
+        log("连接 KOOK 客户端...")
+        cdp.connect()
+        page_url = cdp.evaluate("location.href") or "?"
+        log("已附加频道页面: %s" % page_url)
+
+        # 注入监听；页面可能未就绪，最多重试约 45 秒
+        log("注入消息监听...")
+        status = None
+        for attempt in range(30):
+            status = cdp.inject()
+            if status in ("hooked", "already"):
+                break
+            time.sleep(1.5)
+        log("注入状态: %s" % status)
+        if status not in ("hooked", "already"):
+            log("错误：未找到语音频道消息容器，请确认已进入语音频道后重试")
+            return
+
+        log("自动回复已启动（轮询间隔 %dms）。按 Ctrl+C 停止。"
+            % int(cdp.poll_interval * 1000))
         while True:
             msgs = cdp.drain_queue()
             for msg in msgs:
-                rule = matcher.match(msg)
-                if rule is None:
-                    continue
-                reply = matcher.pick_reply(rule)
-                if not reply:
-                    continue
                 try:
+                    rule = matcher.match(msg)
+                    if rule is None:
+                        continue
+                    reply = matcher.pick_reply(rule)
+                    if not reply:
+                        continue
                     ok = cdp.send_text(reply)
                     matcher.record_reply(msg, rule)
-                    print(f"[回复] {msg.get('name')}({msg.get('uid')}) 触发规则"
-                          f"「{rule.get('name')}」关键词命中 -> 已回复: {reply} 发送={'成功' if ok else '失败'}")
+                    log("[回复] %s(%s) 触发「%s」关键词 -> 已回复: %s 发送=%s"
+                        % (msg.get("name"), msg.get("uid"),
+                           rule.get("name"), reply, "成功" if ok else "失败"))
                 except Exception as e:
-                    print(f"[错误] 发送失败: {e}")
+                    log("[错误] 单条消息处理失败: %s" % e)
             time.sleep(cdp.poll_interval)
     except KeyboardInterrupt:
-        print("\n已停止")
+        log("已停止")
+    except Exception as e:
+        log("[致命错误] %s" % e)
     finally:
         cdp.close()
+        log("自动回复已退出")
 
 
 if __name__ == "__main__":

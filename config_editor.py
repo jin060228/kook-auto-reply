@@ -535,7 +535,23 @@ class App(tk.Tk):
         self.state_var.set("运行中")
         self.btn_start.config(state="disabled")
         self.btn_stop.config(state="normal")
-        self.status_var.set("自动回复已启动（新窗口），日志见 hits.log")
+        self.status_var.set("自动回复已启动（新窗口），日志见 auto_reply.log")
+        self._watch_bot()
+
+    def _watch_bot(self):
+        """每 2 秒检查自动回复进程是否存活，退出时恢复界面状态"""
+        p = self._bot_proc
+        if p is None:
+            return
+        code = p.poll()
+        if code is not None:
+            self._bot_proc = None
+            self.state_var.set("已退出（代码 %s）" % code)
+            self.btn_start.config(state="normal")
+            self.btn_stop.config(state="disabled")
+            self.status_var.set("自动回复已退出，请打开 auto_reply.log 查看原因")
+            return
+        self.after(2000, self._watch_bot)
 
     def stop_bot(self):
         if self._bot_proc and self._bot_proc.poll() is None:
@@ -544,6 +560,7 @@ class App(tk.Tk):
             except Exception:
                 pass
             self.status_var.set("已发送停止指令")
+        self._bot_proc = None
         self.state_var.set("未启动")
         self.btn_start.config(state="normal")
         self.btn_stop.config(state="disabled")
