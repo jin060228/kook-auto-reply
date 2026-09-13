@@ -12,6 +12,12 @@ rem CDP 调试端口
 set "CDP_PORT=9222"
 rem 启动参数
 set "CDP_ARGS=--remote-debugging-port=%CDP_PORT% --remote-allow-origins=*"
+rem ---------- locate python (absolute path, avoid PATH issue) ----------
+set "PY="
+if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" set "PY=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+if not defined PY if exist "%LOCALAPPDATA%\Programs\Python\Python37\python.exe" set "PY=%LOCALAPPDATA%\Programs\Python\Python37\python.exe"
+if not defined PY if exist "%LOCALAPPDATA%\Programs\Python\Python310\python.exe" set "PY=%LOCALAPPDATA%\Programs\Python\Python310\python.exe"
+if not defined PY set "PY=python"
 
 rem ---------- 1. 检查并准备 KOOK ----------
 echo [1/3] 检查 KOOK 运行状态...
@@ -59,7 +65,7 @@ rem ---------- 3. 启动自动回复脚本 ----------
 echo.
 echo [3/3] 打开可视化配置界面...
 cd /d "%~dp0"
-python config_editor.py
+"%PY%" config_editor.py
 if %errorlevel% neq 0 (
     echo.
     echo [错误] 脚本异常退出，错误码 %errorlevel%
