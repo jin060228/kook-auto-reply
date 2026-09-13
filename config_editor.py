@@ -38,6 +38,28 @@ DEFAULT_CONFIG = {
 }
 
 
+# 回复模式：界面显示中文，config.yaml 中仍存英文值（auto_reply.py 使用）
+MODE_LABELS = {"fixed": "固定回复", "random": "随机回复", "sequential": "轮流回复"}
+MODE_HINTS = {
+    "fixed": "始终回复第一条",
+    "random": "每次命中随机挑一条",
+    "sequential": "多条回复按顺序轮流使用",
+}
+
+
+def mode_to_label(mode):
+    """英文模式值 -> 中文显示名（未知值回退固定回复）"""
+    return MODE_LABELS.get(mode, "固定回复")
+
+
+def label_to_mode(label):
+    """中文显示名 -> 英文模式值（未知值回退 fixed）"""
+    for k, v in MODE_LABELS.items():
+        if v == label:
+            return k
+    return "fixed"
+
+
 # ---------------------------------------------------------------------------
 # 数据层（可单元测试）
 # ---------------------------------------------------------------------------
@@ -89,8 +111,20 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("KOOK 自动回复 · 可视化配置")
-        self.geometry("960x620")
-        self.minsize(800, 540)
+        self.geometry("1000x660")
+        self.minsize(820, 560)
+
+        # 视觉主题：clam 更现代；强调按钮（启动自动回复）用绿色
+        self.style = ttk.Style(self)
+        try:
+            self.style.theme_use("clam")
+        except tk.TclError:
+            pass
+        self.style.configure("Accent.TButton", foreground="#ffffff",
+                             background="#2f9e44", font=("", 9, "bold"))
+        self.style.map("Accent.TButton",
+                       background=[("active", "#2b8a3e"), ("disabled", "#94d3a2")])
+        self.style.configure("Treeview", rowheight=24)
 
         self.cfg = load_config()
         self._build_ui()
@@ -113,7 +147,8 @@ class App(tk.Tk):
         self.status_var = tk.StringVar(value="就绪")
         ttk.Label(bar, textvariable=self.status_var, foreground="#555").pack(side="left")
         ttk.Button(bar, text="保存配置", command=self.save).pack(side="right", padx=4)
-        ttk.Button(bar, text="启动自动回复", command=self.start_bot).pack(side="right", padx=4)
+        ttk.Button(bar, text="启动自动回复", command=self.start_bot,
+                   style="Accent.TButton").pack(side="right", padx=4)
         ttk.Button(bar, text="退出", command=self.destroy).pack(side="right", padx=4)
 
     def _build_rules_tab(self):
@@ -132,7 +167,7 @@ class App(tk.Tk):
         self.rule_tree.heading("cd", text="冷却")
         self.rule_tree.heading("pri", text="优先级")
         for col, w in zip(("enabled", "keywords", "replies", "mode", "cd", "pri"),
-                          (44, 160, 160, 70, 50, 60)):
+                          (44, 180, 180, 90, 50, 60)):
             self.rule_tree.column(col, width=w, anchor="center")
         self.rule_tree.pack(fill="both", expand=True)
         self.rule_tree.bind("<<TreeviewSelect>>", self._on_rule_select)
@@ -159,19 +194,32 @@ class App(tk.Tk):
             ttk.Label(right, text=label).grid(row=r, column=0, sticky="w", padx=6, pady=4)
             if values:
                 var = tk.StringVar()
-                box = ttk.Combobox(right, textvariable=var, values=values, state="readonly", width=18)
+                box = ttk.Combobox(right, textvariable=var,
+                                   values=list(MODE_LABELS.values()),
+                                   state="readonly", width=18)
                 box.current(0)
                 self.form[key] = box
             else:
                 var = tk.StringVar()
-                ent = ttk.Entry(right, textvariable=var, width=22)
+                ent = ttk.Entry(right, textvariable=var, width=24)
                 self.form[key] = ent
             self.form[key].grid(row=r, column=1, sticky="w", padx=6, pady=4)
+
+        # 回复模式说明（随选择动态更新）
+        hint_row = len(rows)
+        self.mode_hint_var = tk.StringVar()
+        ttk.Label(right, textvariable=self.mode_hint_var, foreground="#888",
+                  wraplength=240, justify="left").grid(
+            row=hint_row, column=0, columnspan=2, sticky="w", padx=6, pady=(0, 6))
+        self.form["reply_mode"].bind("<<ComboboxSelected>>", self._update_mode_hint)
+        self._update_mode_hint()
+
+        enabled_row = hint_row + 1
         self.form["enabled_var"] = tk.BooleanVar(value=True)
         ttk.Checkbutton(right, text="启用此规则", variable=self.form["enabled_var"]).grid(
-            row=len(rows), column=0, columnspan=2, sticky="w", padx=6, pady=4)
+            row=enabled_row, column=0, columnspan=2, sticky="w", padx=6, pady=4)
         ttk.Button(right, text="应用到选中规则", command=self.apply_rule).grid(
-            row=len(rows) + 1, column=0, columnspan=2, sticky="ew", padx=6, pady=8)
+            row=enabled_row + 1, column=0, columnspan=2, sticky="ew", padx=6, pady=8)
 
     def _build_whitelist_tab(self):
         tab = ttk.Frame(self.notebook)
@@ -226,6 +274,10 @@ class App(tk.Tk):
                   foreground="#777").pack(anchor="w", padx=12, pady=(6, 0))
 
     # ---------- 规则页逻辑 ----------
+    def _update_mode_hint(self, _event=None):
+        mode = label_to_mode(self.form["reply_mode"].get())
+        self.mode_hint_var.set("模式说明：" + MODE_HINTS.get(mode, ""))
+
     def _refresh_rules(self):
         self.rule_tree.delete(*self.rule_tree.get_children())
         for i, r in enumerate(self.cfg.get("rules", [])):
@@ -233,10 +285,17 @@ class App(tk.Tk):
                 "是" if r.get("enabled", True) else "否",
                 format_csv(r.get("keywords", []))[:30],
                 format_csv(r.get("replies", []))[:30],
-                r.get("reply_mode", "fixed"),
+                mode_to_label(r.get("reply_mode", "fixed")),
                 r.get("cooldown", 0),
                 r.get("priority", 0),
             ))
+        self._update_status()
+
+    def _update_status(self, extra=None):
+        n_rules = len(self.cfg.get("rules", []))
+        n_wl = len(self.cfg.get("whitelist", {}).get("users", []))
+        base = "规则 %d 条 · 白名单 %d 人" % (n_rules, n_wl)
+        self.status_var.set("%s · %s" % (extra, base) if extra else base)
 
     def _on_rule_select(self, _event=None):
         sel = self.rule_tree.selection()
@@ -253,20 +312,23 @@ class App(tk.Tk):
             self.form["replies"].delete(0, "end")
             self.form["replies"].insert(0, format_csv(r.get("replies", [])))
             mode = r.get("reply_mode", "fixed")
-            if mode in ("random", "fixed", "sequential"):
-                self.form["reply_mode"].set(mode)
+            self.form["reply_mode"].set(mode_to_label(mode))
+            self._update_mode_hint()
             self.form["cooldown"].delete(0, "end")
             self.form["cooldown"].insert(0, str(r.get("cooldown", 0)))
             self.form["priority"].delete(0, "end")
             self.form["priority"].insert(0, str(r.get("priority", 0)))
             self.form["enabled_var"].set(bool(r.get("enabled", True)))
+            # 状态栏展示该条规则的完整关键词与回复（列表截断之外的补充）
+            self._update_status("关键词：%s → 回复：%s" % (
+                format_csv(r.get("keywords", [])), format_csv(r.get("replies", []))))
 
     def _get_form_values(self):
         """从表单读取规则字段，返回 dict 或抛 ValueError"""
         name = self.form["name"].get().strip()
         keywords = parse_csv(self.form["keywords"].get())
         replies = parse_csv(self.form["replies"].get())
-        mode = self.form["reply_mode"].get()
+        mode = label_to_mode(self.form["reply_mode"].get())
         cooldown = int(self.form["cooldown"].get() or 0)
         priority = int(self.form["priority"].get() or 0)
         if not name:
@@ -339,6 +401,7 @@ class App(tk.Tk):
         self.whitelist_box.delete(0, "end")
         for uid in self.cfg.get("whitelist", {}).get("users", []):
             self.whitelist_box.insert("end", str(uid))
+        self._update_status()
 
     def add_whitelist(self):
         uid = self.whitelist_entry.get().strip()

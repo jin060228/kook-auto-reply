@@ -9,7 +9,28 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config_editor import (load_config, save_config, parse_csv, format_csv,
+                           mode_to_label, label_to_mode, MODE_LABELS,
                            DEFAULT_CONFIG)
+
+
+class TestReplyMode(unittest.TestCase):
+    def test_英文值转中文标签(self):
+        self.assertEqual(mode_to_label("fixed"), "固定回复")
+        self.assertEqual(mode_to_label("random"), "随机回复")
+        self.assertEqual(mode_to_label("sequential"), "轮流回复")
+
+    def test_中文标签转英文值(self):
+        self.assertEqual(label_to_mode("固定回复"), "fixed")
+        self.assertEqual(label_to_mode("随机回复"), "random")
+        self.assertEqual(label_to_mode("轮流回复"), "sequential")
+
+    def test_往返一致(self):
+        for en, zh in MODE_LABELS.items():
+            self.assertEqual(label_to_mode(mode_to_label(en)), en)
+
+    def test_未知值回退(self):
+        self.assertEqual(mode_to_label("unknown"), "固定回复")
+        self.assertEqual(label_to_mode("不存在的模式"), "fixed")
 
 
 class TestCsv(unittest.TestCase):
